@@ -59,8 +59,8 @@ export function VMwareMouse(cpu, bus)
 
     this.bus.register("mouse-absolute", function(data)
     {
-        const x = Math.round(data[0] / data[2] * 0xFFFF);
-        const y = Math.round(data[1] / data[3] * 0xFFFF);
+        const x = Math.max(0, Math.min(0xFFFF, Math.round(data[0] / data[2] * 0xFFFF)));
+        const y = Math.max(0, Math.min(0xFFFF, Math.round(data[1] / data[3] * 0xFFFF)));
         if(x === this.last_x && y === this.last_y)
         {
             return;
