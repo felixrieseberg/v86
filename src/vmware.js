@@ -56,6 +56,7 @@ export function VMwareMouse(cpu, bus)
     this.buttons = 0;
     this.last_x = -1;
     this.last_y = -1;
+    this.tail_is_move = false;
 
     this.bus.register("mouse-absolute", function(data)
     {
@@ -67,7 +68,7 @@ export function VMwareMouse(cpu, bus)
         }
         this.last_x = x;
         this.last_y = y;
-        this.push_packet(0);
+        this.push_packet(0, true);
     }, this);
 
     this.bus.register("mouse-click", function(data)
@@ -76,22 +77,33 @@ export function VMwareMouse(cpu, bus)
             (data[0] ? BUTTON_LEFT : 0) |
             (data[1] ? BUTTON_MIDDLE : 0) |
             (data[2] ? BUTTON_RIGHT : 0);
-        this.push_packet(0);
+        this.push_packet(0, false);
     }, this);
 
     this.bus.register("mouse-wheel", function(data)
     {
-        this.push_packet(-data[0] | 0);
+        this.push_packet(-data[0] | 0, false);
     }, this);
 
     cpu.io.register_read(VMWARE_PORT, this, undefined, undefined, this.port_read32);
     cpu.io.register_write(VMWARE_PORT, this, undefined, undefined, this.port_write32);
 }
 
-VMwareMouse.prototype.push_packet = function(wheel)
+VMwareMouse.prototype.push_packet = function(wheel, move_only)
 {
     if(!this.enabled || !this.absolute || this.last_x < 0)
     {
+        return;
+    }
+    // Absolute pointing has no use for move history — if the guest hasn't
+    // drained the previous move yet, overwrite it in place. Clicks and wheel
+    // are never coalesced. This keeps the guest cursor at most one frame
+    // behind regardless of how slowly it drains, and makes overflow
+    // unreachable in practice.
+    if(move_only && this.tail_is_move && this.queue.length >= 4)
+    {
+        this.queue[this.queue.length - 3] = this.last_x;
+        this.queue[this.queue.length - 2] = this.last_y;
         return;
     }
     if(this.queue.length + 4 > QUEUE_MAX)
@@ -102,6 +114,7 @@ VMwareMouse.prototype.push_packet = function(wheel)
         return;
     }
     this.queue.push(this.buttons, this.last_x, this.last_y, wheel);
+    this.tail_is_move = move_only;
 };
 
 VMwareMouse.prototype.port_read32 = function()
@@ -141,6 +154,7 @@ VMwareMouse.prototype.port_read32 = function()
                 case ABSPOINTER_ENABLE | 0:
                     this.enabled = true;
                     this.queue.length = 0;
+                    this.tail_is_move = false;
                     this.queue.push(READ_ID);
                     break;
                 case ABSPOINTER_DISABLE:
