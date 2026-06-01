@@ -13,6 +13,7 @@ const CMD_GETNEXTPIECE = 7;
 const CMD_SETSELLENGTH = 8;
 const CMD_SETNEXTPIECE = 9;
 const CMD_GETVERSION = 10;
+const CMD_GETTIME = 23;
 const CMD_ABSPOINTER_DATA = 39;
 const CMD_ABSPOINTER_STATUS = 40;
 const CMD_ABSPOINTER_COMMAND = 41;
@@ -35,8 +36,10 @@ const CLIP_MAX = 0x10000;
  * VMware backdoor (port 0x5658). Implements the absolute-pointer commands so
  * a guest driver can track the host cursor 1:1 without pointer lock, plus the
  * legacy text-clipboard commands (6–9) so a guest agent can sync CF_TEXT with
- * the host. PS/2 still supplies the mouse IRQ; the driver reads this port on
- * each IRQ12.
+ * the host, plus GETTIME (23) so a guest agent can keep the guest clock in
+ * sync with the host (guests only read the RTC at boot, so a restored state
+ * resumes with a stale clock). PS/2 still supplies the mouse IRQ; the driver
+ * reads this port on each IRQ12.
  *
  * @constructor
  * @param {CPU} cpu
@@ -156,6 +159,22 @@ VMwareMouse.prototype.port_read32 = function()
         case CMD_GETVERSION:
             reg32[REG_EBX] = VMWARE_MAGIC;
             return 6;
+
+        case CMD_GETTIME:
+        {
+            // EAX = host time in seconds since the Unix epoch (UTC),
+            // EBX = remaining microseconds, ECX = maximum time lag in
+            // microseconds, EDX = host's offset from UTC in minutes (east
+            // positive). Deprecated upstream in favour of GETTIMEFULL because
+            // EAX overflows as a signed value in 2038, but it's the simplest
+            // command a 32-bit guest agent can consume — read unsigned it's
+            // good until 2106.
+            const now = Date.now();
+            reg32[REG_EBX] = now % 1000 * 1000;
+            reg32[REG_ECX] = 1000000;
+            reg32[REG_EDX] = -new Date(now).getTimezoneOffset();
+            return now / 1000 >>> 0;
+        }
 
         case CMD_GETSELLENGTH:
             if(!this.clip_out_fresh)
